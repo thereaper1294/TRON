@@ -1,0 +1,91 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <WebSocketsServer.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#define VRX 34
+#define VRY 35
+#define RESET_BTN 32
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+const char* ssid = "TRON_Game";
+WebServer server(80);
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+String direction = "RIGHT";
+int score = 0;
+bool gameOver = false;
+bool gameStarted = false;
+
+void setupWiFi() {
+  WiFi.softAP(ssid);
+  Serial.print("AP IP: ");
+  Serial.println(WiFi.softAPIP());
+}
+
+void handleRoot() {
+  server.send(200, "text/html", R"rawliteral(<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'><style>body{margin:0;background:black;color:#0ff;font-family:monospace;text-align:center}canvas{background:black;border:2px solid #0ff;display:block;margin:auto}</style></head><body><h2>TRON ARCADE</h2><canvas id='game' width='300' height='300'></canvas><p id='status'>Waiting for joystick movement...</p><script>const canvas=document.getElementById('game'),ctx=canvas.getContext('2d'),size=20,tiles=canvas.width/size;let p={x:2,y:2,dx:1,dy:0,tr:[]},e={x:tiles-3,y:tiles-3,dx:-1,dy:0,tr:[]},score=0,running=false,moved=false,winStreak=0,lossStreak=0,aiDifficulty=1;let startSound,crashSound,winSound,backgroundHum;function initSounds(){if(startSound)return;startSound=new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0Yf////8AAAA=');crashSound=new Audio('data:audio/wav;base64,UklGRhAAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YcD//wD//wD//wD//wAAAP//');winSound=new Audio('data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YcD/AP8A/wD/AP8A/wD/AP8A');backgroundHum=new Audio('data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YeHh4eHh4eHh4eHh4eHh4eHh4eE=');backgroundHum.loop=true;}const ws=new WebSocket('ws://'+location.hostname+':81/');ws.onmessage=m=>{const d=m.data;if(d==='reset')return startGame();if(!running&&!moved){moved=true;initSounds();startSound.play();document.getElementById('status').innerText='Game starting...';setTimeout(()=>{running=true;backgroundHum.play();loop()},500)}if(d=='UP'&&p.dy==0)p.dx=0,p.dy=-1;if(d=='DOWN'&&p.dy==0)p.dx=0,p.dy=1;if(d=='LEFT'&&p.dx==0)p.dx=-1,p.dy=0;if(d=='RIGHT'&&p.dx==0)p.dx=1,p.dy=0;};function draw(x,y,c){ctx.fillStyle=c;ctx.fillRect(x*size,y*size,size-1,size-1)}function move(o){o.x+=o.dx;o.y+=o.dy;o.tr.push({x:o.x,y:o.y})}function collide(t,o){return t.some(e=>e.x==o.x&&e.y==o.y)}function adjustAI(){let c=.3+aiDifficulty*.1;if(Math.random()<c){let d=Math.floor(4*Math.random());if(d==0&&e.dy==0)e.dx=0,e.dy=-1;if(d==1&&e.dy==0)e.dx=0,e.dy=1;if(d==2&&e.dx==0)e.dx=-1,e.dy=0;if(d==3&&e.dx==0)e.dx=1,e.dy=0}}function loop(){if(!running)return;move(p),move(e),adjustAI();if(p.x<0||p.y<0||p.x>=tiles||p.y>=tiles||collide(p.tr.slice(0,-1),p)||collide(e.tr,p)){document.getElementById('status').innerText='Game Over! Press Reset';running=false;backgroundHum.pause();crashSound.play();ws.send('score:'+score);lossStreak++;winStreak=0;if(lossStreak>=3)aiDifficulty=Math.max(1,aiDifficulty-1);return;}if(e.x<0||e.y<0||e.x>=tiles||e.y>=tiles||collide(e.tr.slice(0,-1),e)||collide(p.tr,e)){document.getElementById('status').innerText='You Win! Press Reset';running=false;backgroundHum.pause();winSound.play();ws.send('score:'+score);winStreak++;lossStreak=0;if(winStreak>=2)aiDifficulty=Math.min(5,aiDifficulty+1);return;}ctx.clearRect(0,0,canvas.width,canvas.height);draw(p.x,p.y,'#0ff');p.tr.forEach(t=>draw(t.x,t.y,'#044'));draw(e.x,e.y,'#f60');e.tr.forEach(t=>draw(t.x,t.y,'#220'));score++;setTimeout(loop,150-aiDifficulty*10);}function startGame(){p={x:2,y:2,dx:1,dy:0,tr:[]},e={x:tiles-3,y:tiles-3,dx:-1,dy:0,tr:[]},score=0,moved=false;document.getElementById('status').innerText='Waiting for joystick movement...';ctx.clearRect(0,0,canvas.width,canvas.height);}</script></body></html>)rawliteral");
+}
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t len) {
+  if (type == WStype_TEXT) {
+    String msg = (char*)payload;
+    if (msg.startsWith("score:")) {
+      score = msg.substring(6).toInt();
+      gameOver = true;
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  setupWiFi();
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("TRON Game");
+  pinMode(RESET_BTN, INPUT_PULLUP);
+  server.on("/", handleRoot);
+  server.begin();
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+}
+
+void loop() {
+  server.handleClient();
+  webSocket.loop();
+
+  if (gameOver && digitalRead(RESET_BTN) == LOW) {
+    gameOver = false;
+    direction = "RIGHT";
+    score = 0;
+    lcd.setCursor(0, 0);
+    lcd.print("                ");
+    lcd.setCursor(0, 0);
+    lcd.print("TRON Game");
+    webSocket.broadcastTXT("reset");
+    delay(300);
+  }
+
+  int x = analogRead(VRX);
+  int y = analogRead(VRY);
+  String newDir = direction;
+
+  if (x < 1000) newDir = "LEFT";
+  else if (x > 3000) newDir = "RIGHT";
+  else if (y < 1000) newDir = "UP";
+  else if (y > 3000) newDir = "DOWN";
+
+  if (newDir != direction) {
+    direction = newDir;
+    webSocket.broadcastTXT(direction);
+  }
+
+  lcd.setCursor(0, 1);
+  lcd.print("Score: ");
+  lcd.print(score);
+  lcd.print("    ");
+  delay(50);
+}
